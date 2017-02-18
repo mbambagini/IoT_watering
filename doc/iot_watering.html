@@ -1,0 +1,663 @@
+<html>
+<head><title>IoT watering</title></head>
+<body>
+
+<h1>IoT watering - project documentation</h1>
+
+<p>
+This project implements a remote-controlled distributed watering system,
+which:
+<ol>
+<li>waters plants periodically and automatically</li>
+<li>collects data from the environment: moisture, humidity and
+temperature</li>
+<li>sends a daily report about the overall status</li>
+<li>lets users access data at any time</li>
+</ol>
+</p>
+
+<p>
+The acquisition of environmental information may let users carry on post
+analysis.
+For instance, identifying the best location to place succulent plants to 
+have a dry soil.
+</p>
+
+<p>
+The wireless power supplier is mainly used to simplify synchronization 
+among components and reduce maintenance (due to battery
+replacement).<br/>
+This non-conventional use of this technology has been investigated to
+provide additional user cases instead of the classical charging station.
+</p>
+
+<p>
+The overall system includes a data collector (which leads operations and
+aggregates all data) and a set of distributed units (see Figure 1).<br/>
+Here after, they are named <b>supervisor</b> and <b>watering units</b>,
+respectively.<br/>
+The wireless power supplier is controlled by the supervisor to activate
+the watering units when needed.<br/>
+Moreover, the supervisor sends data to the cloud to store all the sampled
+information (making it available to the users at any time).
+</p>
+
+<figure>
+  <img src="overall.png" alt="Overall architecture" width="800" height="250">
+  <figcaption>Figure 1 - Overall architecture</figcaption>
+</figure>
+
+<p>
+Supervisor and watering units talk each other through a wireless
+connection using ssWi as protocol.<br/>
+This was developed for a previous project so it was already available and
+tested.<br/>
+This has been the motivation for other design choices, described later,
+to reduce the overall cost of this project.
+</p>
+
+<p>
+This section starts explaining the two main components: supervisor and
+watering units.<br/>
+Then, the scripts on the clouds, the communication protocol and user
+interface are introduced.
+</p>
+
+<p>
+Due to space reasons, the source code has not been copied here but it
+is fully available online at this <a href="https://github.com/mbambagini/IoT_watering">repository</a> (tag: <i>release 1.0</i>). Looking at the tag date, you can check that the code was submitted by the 28th February.
+</p>
+
+
+<h2>Supervisor</h2>
+
+<p>
+The supervisor, shown in Figure 2, is composed of the following
+components:
+<ul>
+<li>a mbed board: this leads the watering and data acquisition
+    process</li>
+<li>a PC: this collects data periodically from the mbed board, updates
+    an internal database and sends data to the cloud</li>
+</ul>
+The PC and the mbed board are connected using a USB cable and
+communicates using the mass memory available on the latter.<br/>
+Note that, a Raspberry board would be able to do everything while 
+requiring less space.
+However, the mentioned hardware was already available without need to
+buy anything else.
+</p>
+
+<figure>
+  <img src="supervisor.png" alt="Supervisor architecture"  width="600"/>
+  <figcaption>Figure 2 - Supervisor architecture</figcaption>
+</figure>
+
+<p>
+Let us start from the mbed board. It is in charge on periodically waking
+up the watering units, leading the sampling step and, eventually, 
+making them water the flowers.<br/>
+This task is executed every interval <i>Tsamp</i> whose duration (in
+minutes) can be configured by the user.<br/>
+The main components are the following:
+<ul>
+<li>board</li>
+<ul>
+<li>mbed NXP LPC1768 - ARM Cortex M-3 MCU</li>
+<li>powered by USB from the PC</li>
+</ul>
+<li>wireless power supplier</li>
+<ul>
+<li>enabled by digital out on pin 17</li>
+<li>this module is powered by an additional USB link to the PC</li>
+</ul>
+<li>transceiver</li>
+<ul>
+<li>Xbee 802.15.4 using ssWi protocol</li>
+</ul>
+</ul>
+The circuit of the board is reported in Figure 3.<br/>
+As already said, this board is powered by USB (plugged directly to the
+board) and the additional power is provided by another USB port.<br/>
+<figure>
+  <img src="supervisor_circuit.png" alt="Supervisor circuit"  width="600"/>
+  <figcaption>Figure 3 - Supervisor circuit</figcaption>
+</figure>
+</p>
+
+<p>
+The (single-thread) software running on the board performes the following
+steps:
+<ol>
+<li>read from file the system configuration</li>
+<ul>
+<li>execution interval <i>Tsamp</i> (in minutes)</li>
+<li>number of watering units</li>
+<li>for each watering unit:</li>
+<ul>
+<li>network identifier</li>
+<li>watering period <i>Twater</i> (number of <i>Tsamp</i> between two
+    consecutive waterings)</li>
+<li>watering duration</li>
+</ul>
+</ul>
+<li>start network</i>
+<li>while true</i>
+<ol>
+<li>wait <i>Tsamp</i> (in minutes)</i>
+<li>lock busy file (the PC cannot access memory on the board)</li>
+<li>read counter from file</li>
+<li>power on the watering units</li>
+<li>wait 20 seconds</li>
+<li>sampling...</li>
+<ul>
+<li>send START_SAMPLING command</li>
+<li>wait 60 seconds</li>
+<li>send STOP_SAMPLING command</li>
+<li>wait 2 seconds</li>
+<li>for each watering unit</li>
+<ul>
+<li>read feedback</li>
+<li>if feedback is OK, read temperature, humidity and moisture</li>
+<li>store data to file</li>
+</ul>
+</ul>
+<li>watering...</li>
+<ul>
+<li>for each watering unit <i>i</i></li>
+<ul>
+<li>if the number of interval since last watering is lower than
+    configured, skip this node</li>
+<li>send <i>Twater</i> of the <i>i</i>-th unit</li>
+<li>wait 5 seconds</li>
+<li>send the watering command for the <i>i</i>-th unit</li>
+<li>wait <i>Twater</i> plus 5 more seconds</li>
+<li>read feedback</li>
+<li>store data to file
+</li>
+</ul>
+</ul>
+<li>increase counter</li>
+<li>serialize counter</li>
+<li>send SHUTDOWN command</li>
+<li>wait 5 seconds</li>
+<li>power off the watering units</li>
+<li>release busy file (now the PC can read the files)</li>
+</ol>
+</ol>
+The file containing the sensor values has a line for each sample.<br/>
+A line contains the internal counter value, the watering unit network
+ID, the correctness of the value (1 if data is correct, 0 means that an 
+error happened during the communication), temperature, humidity and
+moisture.<br/>
+A line-based structure is also used for the watering file.<br/>
+An entry contains the counter value, the watering unit network ID, the 
+result of the operation (1 all correct, 0 for errors) and the watering
+seconds.<br/>
+Data within files is separated by a single space (no special characters).
+</p>
+
+<p>
+The software is available in the <i>supervisor</i> folder and it
+depends on mbed drivers, mbed RTOS and the ssWi library for
+the communication protocol.<br/>
+</p>
+
+<p>
+The software running on the PC is a script (<i>update.sh</i>) that every
+day collects the acquired data from the board and process this
+information.<br/>
+The script running on the PC executes the following steps:
+<ul>
+<li>while true</li>
+<ol>
+<li>wait 1 day</li>
+<li>wait until the board is not busy</li>
+<li>wait 5 seconds</li>
+<li>copy the sensor and watering files locally</li>
+<li>remove the counter file</li>
+<li>process data...</li>
+<ul>
+<li>for each line in the sensor file</li>
+<ol>
+<li>parse data</li>
+<li>convert relative time to absolute</li>
+<li>save data in the database</li>
+<li>send data to the cloud</li>
+</ol>
+<li>for each line in the watering file</li>
+<ol>
+<li>parse data</li>
+<li>convert relative time to absolute</li>
+<li>save data in the database</li>
+</ol>
+</ul>
+<li>generate report</li>
+<li>send emails</li>
+<li>update time offset</li>
+</ol>
+</ul>
+</p>
+
+<p>
+Step 6 is executed by running the program <i>reader</i>.<br/>
+It takes as input the supervisor configuration file, the database, the 
+timestamp (in minutes) of the last iteration (one day ago) and the files
+copied from the board.<br/>
+The database (sqlite3) is composed of two tables as detailed in Figure 4
+and it contains all information available in the files provided by the 
+board.<br/>
+<figure>
+  <img src="db.png" alt="database scheme"  width="300"/>
+  <figcaption>Figure 4 - Database scheme</figcaption>
+</figure>
+The only different is the time value as it is a timestamp (in minutes)
+and not a relative value.<br/>
+It is computed by adding to the read offset the read index times the
+interval duration.<br/>
+This application is also in charge of uploading data to the cloud.
+</p>
+
+<p>
+The program <i>shower</i> generates the daily report to be sent by
+email.<br/>
+The inputs are the database file, the timestamp of last update and the 
+list of emails.<br/>
+The generated output is a gnuplot script that, when executed,
+generates the temperature/humidity/moisture graphs of the last day.</br>
+Then, the plots are collected in a single pdf file.<br/>
+In addition, a file with the email body is generated, containing the
+number of sensor failures and if there is any water tank to refill.<br/>
+Then, the file containing the list of email is opened and, for each line,
+<i>mutt</i> is invoked to send an email with the text body and the
+report as attachment.
+</p>
+
+<p>
+More generally, the software running on the PC is in the folder <i>pc</i>
+and it contains the following tree:
+<ul>
+<li>./config.sh: script that lets users create the supervisor
+configuration file</li>
+<li>./update.sh: script that periodically queries the board to copy the
+files with data, update the database, send data to the cloud and send
+the daily report</li>
+<li>./makefile: main makefile to compile the code</li>
+<li>./src: folder containing the source files</li>
+<li>./config</li>
+<ul>
+<li>cfg.txt: supervisor configuration file - do not edit manually but use
+./config.sh</li>
+<li>cloud.txt: file containing the API key to send data to the cloud</li>
+<li>emails.txt: list of emails to send the daily report to</li>
+<li>offset.txt: timestamp (in minutes) of the last report - do not edit
+manually</li>
+</ul>
+<li>./bin: do not use the following binary files directly</li>
+<ul>
+<li>configuration: binary that generates the supervisor config file</li>
+<li>reader: binary that sends data from the files on the board to the
+database and cloud</li>
+<li>shower: binary that generates the gnuplot script</li>
+</ul>
+<li>./data: folder containing temporary files - do not edit manually</li>
+<li>./main.db: database file using sqlite3 - remove this file if you
+want to restart data history</li>
+</ul>
+This software depends on the following additional software: gnuplot, mutt
+and libcurl.
+</p>
+
+<p>
+Figure 5 and Figure 6 show the whole supervisor system, including the PC
+and the mbed board.
+<figure>
+  <img src="supervisor_pic_1.png" alt="Supervisor system"  width="600"/>
+  <figcaption>Figure 5 - Supervisor system</figcaption>
+</figure>
+<figure>
+  <img src="supervisor_pic_2.png" alt="Supervisor system"  width="600"/>
+  <figcaption>Figure 6 - Supervisor board</figcaption>
+</figure>
+</p>
+
+<h2>Watering units</h2>
+
+<p>
+The main task of the watering units is to wait supervisor commands and
+then: reading from the sensors and watering the plants.
+</p>
+
+<p>
+The structure of the watering unit is reported in Figure 7, while Figure
+8 shows circuit. The list of component is the following:
+<ul>
+<li>main board</li>
+<ul>
+<li>mbed NXP LPC1768 - ARM Cortex M-3 MCU</li>
+<li>powered by the wireless power receiver</li>
+</ul>
+<li>sensors</li>
+<ul>
+<li>humidity and temperature: HDT11 on digital pin 17</li>
+<ul>
+<li>humidity is in [0.0, 1.0] representing [0, 100]% humidity
+level</li>
+<li>temperature is in Celcius degree</li>
+</ul>
+<li>moisture sensor: analog input from pin 18 (value in [0.0, 1.0]
+representing [0, 100]%)</li>
+<li>water-level sensor: digital input on pin14 (0: normal level,
+    1: low level)</li>
+</ul>
+<li>actuator</li>
+<ul>
+<li>pump: brushless DC motor - 240 liters per hour</li>
+<li>controlled by digital out pin 25, connected to SRD-05VCD relay</li>
+<li>powered by a power converted (230V to 12V)</li>
+</ul>
+<li>transceiver</li>
+<ul>
+<li>Xbee 802.15.4 using ssWi protocol</li>
+</ul>
+</ul>
+</p>
+
+<figure>
+  <img src="unit.png" alt="Watering unit architecture"  width="500" height="214"/>
+  <figcaption>Figure 7 - Watering unit architecture</figcaption>
+</figure>
+<figure>
+  <img src="unit_circuit.png" alt="Watering unit circuit"  width="600"/>
+  <figcaption>Figure 8 - Watering unit circuit</figcaption>
+</figure>
+
+<p>
+When the unit is waken up, the systems run the following three threads:
+<ul>
+<li>main thread (normal priority)</li>
+<ol>
+<li>wait 10 seconds to have a stable power signal</li>
+<li>read the network address from file</li>
+<li>configure the communication transceiver and network</li>
+<li>create and run the sensing and watering (aperiodic) threads</li>
+<li>if shutdown command is received:</li>
+<ul>
+<li>terminate all threads</li>
+<li>clean communication ports</li>
+<li>wait until power off</li>
+</ul>
+</ol>
+<li>Sensing thread (high priority)</li>
+<ol>
+<li>wait the start command</li>
+<li>wait 2 seconds to stabilize inputs</li>
+<li>read from the sensors every 2.5 seconds for 10 times</li>
+<ul>
+<li>if this lasts more than 60 seconds, send SAMPLING_OUT and exit</li>
+</ul>
+<li>compute the average for each input</li>
+<li>wait the stop command</li>
+<li>send average values</li>
+<li>if any error occurred, send SAMPLING_KO, SAMPLING_OK
+    otherwise</li>
+</ol>
+<li>watering thread (highest priority)</li>
+<ol>
+<li>close pump</li>
+<li>wait until the supervisor send the watering command to the unit</li>
+<li>read the watering interval (in seconds) VAR_TOTAL_SECONDS</li>
+<li>clear local variable VAR_ACTUAL_SECONDS</li>
+<li>iterate while VAR_ACTUAL_SECONDS is less than VAR_TOTAL_SECONDS</li>
+<ol>
+<li>read the water-level sensor</li>
+<li>if the level is lower than the security threshold</li>
+<ul>
+<li>close pump</li>
+<li>send WATERING_LOW</li>
+<li>exit</li>
+</ul>
+<li>set <i>t</i> as VAR_TOTAL_SECONDS minus VAR_ACTUAL_SECONDS</li>
+<li>if <i>t</i> is greater than 1, assign 1 to <i>t</i></li>
+<li>open pump</li>
+<li>wait for <i>t</i></li>
+<li>add <i>t</i> to VAR_ACTUAL_SECONDS</li>
+</ol>
+<li>close pump</li>
+<li>send WATERING_OK</li>
+</ul>
+</ol>
+</ul>
+
+<p>
+The configuration file is <i>cfg.txt</i> and it contains an integer 
+representing the node address in the network.
+</p>
+
+<p>
+The code is available in the <i>watering unit</i> folder and it depends
+on mbed drivers, mbed RTOS, ssWi and DHT11 driver.
+</p>
+
+<p>
+The measured power consumption of a watering unit is in the range [130, 190]mA.
+</p>
+
+<p>
+The deployed system is shown in Figure 9 and Figure 10.
+<figure>
+  <img src="unit_pic_1.png" alt="Watering unit picture"  width="600"/>
+  <figcaption>Figure 9 - Watering unit picture</figcaption>
+</figure>
+<figure>
+  <img src="unit_pic_2.png" alt="Watering unit picture"  width="600"/>
+  <figcaption>Figure 10 - Watering unit picture</figcaption>
+</figure>
+</p>
+
+<h2>Cloud</h2>
+
+<p>
+The chosen cloud service is ThingSpeaks as it is powerful and for
+free.<br/>
+The channel <i>IoT_watering</i> is created to contains the following
+fields:
+<ol>
+<li>node</li>
+<li>humidity</li>
+<li>temperature</li>
+<li>moisture</li>
+<li>valid</li>
+</ol>
+The fields contain the same information stored in the data files copied
+from the supervisor board and read by the watering units.
+</p>
+
+<p>
+Three scripts contained in the <i>cloud</i> folder are provided to plot
+the temperature, humidity and moisture of the last seven days.</br>
+Note that, in order to generate a meaningful graph, invalid samples are
+stored but discarded from the plotting.
+</p>
+
+<h2>Communication protocol</h2>
+
+<p>
+The chosen communication protocol is
+<a href="https://developer.mbed.org/users/mariob/code/ssWi/">ssWi</a>
+(Figure 11). It only depends on the library MODSERIAL.<br/>
+The concept of Port is introduced as a virtual memory area shared among 
+all the nodes of the wireless network: each node can subscribe to a port
+by creating a socket which exploits broadcast messages to synchronize
+the port value.<br/>
+Ports are (signed) 4-byte integers and are bi-directional.
+Note that the read and write operations have a different buffer: if a
+node writes on a port, only other nodes can read it - a node cannot read
+from a port what it has written.<br/>
+Ports are identified by a numeric identifier between 0 and 255.<br/>
+Further explanations are out of the scope of this report.
+<figure>
+  <img src="ssWi.png" alt="ssWi protocol"  width="400"/>
+  <figcaption>Figure 11 - ssWi protocol</figcaption>
+</figure>
+</p>
+
+<p>
+The supervisor has a COMMAND port to write commands that are read from
+all other watering units. This port has address equal to 0.<br/>
+Each watering unit has 5 ports:
+<ol>
+<li>feedback: the watering unit writes the status of the last
+    operation (e.g.: low-water level WATERING_LOW, error while sampling
+    SAMPLING_KO)</li>
+<li>temperature: the watering unit writes the sampled temperature</li>
+<li>humidity: the watering unit writes the sampled humidity</li>
+<li>moisture:the watering unit writes the sampled moisture level</li>
+<li>water: the watering unit reads the seconds to water</li>
+</ol>
+The addresses of this ports are computed as the board network identifier
+times 5 plus the port entry number.<br/>
+The values sent through the humidity, temperature and moisture ports are
+multiplied by 10 (as the stored value is an integer).
+</p>
+
+<p>
+The possible commands on the COMMAND port sent from the supervisor are:
+<ul>
+<li>0x0000: no value - default state</li>
+<li>0xAAAA: start sampling - START_SAMPLING</li>
+<li>0x1111: stop sampling - STOP_SAMPLING</li>
+<li>0xFF00 + <i>id</i>: start watering for watering unit with network
+identifier equal to <i>id</i></li>
+<li>0x00FF: shutdown</li>
+</ul>
+The values sent from the watering units to the supervisor on the
+feedback port are:
+<ul>
+<li>0xBBBB: correct sampling - SAMPLING_OK</li>
+<li>0x2222: sampling not correct - SAMPLING_KO</li>
+<li>0x5555: timeout while sampling - SAMPLING_OUT</li>
+<li>0x3333: correct watering - WATERING_OK</li>
+<li>0xCCCC: watering not correct - WATERING_KO</li>
+<li>0x7777: low-level water tank - WATERING_LOW</li>
+</ul>
+</p>
+
+<h2>User interface</h2>
+
+<p>
+Users can check that a communication between the supervisor and watering
+units is in progress by looking at the fourth led on the supervisor 
+board.
+</p>
+
+<p>
+A script is provide to generate and copy the configuration file for the
+supervisor board.
+To run the script, users must type:<br/>
+<code>
+$ ./config.sh /media/MBED<br/>
+</code>
+The script will ask information about how long an interval lasts, the
+number of watering units and their characteristics.<br/>
+Then, the file is copied automatically in the config directory and on
+the board once it is not busy.<br/>
+The first argument is the folder where the memory of the board is mounted
+on the PC.
+</p>
+
+<p>
+In <i>./config/cloud.txt</i>, users specifies to API key to be used while
+updating data on the cloud.<br>
+The file format is simple as the key is the first non-empty line that
+does not start with #.
+</p>
+
+<p>
+In <i>./config/emails.txt</i>, users can specify the list of email
+addresses to notify periodically the state of the system.<br/>
+To modifiy the file, edit it manually by appending the email addresses
+without spaces or empty lines. For example:<br/>
+<code>
+$ cat ./config/emails.txt<br/>
+person1@gmail.com<br/>
+person2@gmail.com<br/>
+person3@gmail.com
+</code>
+</p>
+
+<p>
+The generated email contains the following text as message:
+<pre>
++++++++++++++++++++++++++++++++++
+Update watering system
+
+Last update : 18/02/2017 00:20:00
+Current time: 18/02/2017 00:21:00
+
+Sensing fail report
+Unit    Fails    Total    Ratio
+   0        4       12    33.33%
+
+Low-water report
+Watering unit 0: OK
++++++++++++++++++++++++++++++++++
+</pre>
+The text explains when the report was generated the last time and the
+actual time.<br/>
+Moreover, the message reports the total number of sampling errors (since
+the last email) and if any water tank is empty.<br/>
+The attachment contains three plots of the temperature, humidity and 
+moisture (see Figure 12).<br>
+<figure>
+  <img src="report.png" alt="Attached pdf report"  width="300"/>
+  <figcaption>Figure 12 - Attached PDF report</figcaption>
+</figure>
+</p>
+
+<p>
+Emails are sent using <i>mutt</i> whose configuration is in
+<i>~/.muttrc</i> and it looks like:<br/>
+<code>
+set from = "username@gmail.com"<br/>
+set realname = "IoT Watering"<br/>
+set postponed ="+[Gmail]/Drafts"<br/>
+set header_cache =~/.mutt/cache/headers<br/>
+set message_cachedir =~/.mutt/cache/bodies<br/>
+set smtp_url = "smtp://username@smtp.gmail.com:587/"<br/>
+set smtp_pass = "hoyrlibtdzptpxnh"<br/>
+set imap_keepalive = 900<br/>
+</code>
+Note that, in case you are using gmail, you should activate the access
+from non-protected applications.
+</p>
+
+<p>
+On the cloud, the following graphs are generated, reporting the
+sensed temperature, humidity and moisture level for each watering
+unit in the last seven days.<br/>
+Some examples are reported in Figure 13, Figure 14 and Figure 15.
+The moisture level increases as the unit has watered the flower.
+<figure>
+  <img src="cloud_temperature.png" alt="Temperature plot on the cloud"  width="400"/>
+  <figcaption>Figure 13 - Temperature plot on the cloud</figcaption>
+</figure>
+<figure>
+  <img src="cloud_humidity.png" alt="Humidity plot on the cloud"  width="400"/>
+  <figcaption>Figure 14 - Humidity plot on the cloud</figcaption>
+</figure>
+<figure>
+  <img src="cloud_moisture.png" alt="Moisture plot on the cloud"  width="400"/>
+  <figcaption>Figure 15 - Moisture plot on the cloud</figcaption>
+</figure>
+</p>
+
+<p>
+Concerning the watering units, the configuration file is created manually
+and it contains only an integer representing the unit network identifier.
+</p>
+
+</body>
+
+</html>
+
