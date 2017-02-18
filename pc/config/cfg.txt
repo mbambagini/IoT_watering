@@ -1,0 +1,7 @@
+# how long an interval last (minutes)
+1
+# number of watering units
+1
+# configuration of the watering units
+0 1440 1
+
